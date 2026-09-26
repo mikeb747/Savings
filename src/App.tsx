@@ -33,8 +33,10 @@ import { PivotTableView } from './components/PivotTableView';
 import { UpdateDataModal } from './components/UpdateDataModal';
 import { SpreadsheetSelectorModal } from './components/SpreadsheetSelectorModal';
 import { PwaInstallBanner } from './components/PwaInstallBanner';
+import { MobileQrModal } from './components/MobileQrModal';
 import {
   Wallet,
+  Smartphone,
   RefreshCw,
   LogOut,
   FolderOpen,
@@ -75,6 +77,7 @@ export default function App() {
   // Modals & Interaction
   const [isSelectorOpen, setIsSelectorOpen] = useState(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
   const [selectedCellForEdit, setSelectedCellForEdit] = useState<{
     cell: PivotTableCell;
     rowLabel: string;
@@ -426,12 +429,23 @@ export default function App() {
           )}
 
           {/* Google Sign In Button */}
-          <div className="pt-2 flex flex-col items-center">
+          <div className="pt-2 flex flex-col items-center gap-2">
             <GoogleSignInButton onClick={handleLogin} isLoading={isLoggingIn} />
-            <p className="text-[11px] text-slate-500 mt-3">
+            
+            <button
+              onClick={() => setIsQrModalOpen(true)}
+              className="inline-flex items-center gap-2 px-3 py-2 text-xs text-slate-400 hover:text-emerald-300 transition-colors bg-slate-900/60 rounded-xl border border-slate-800 hover:border-slate-700 cursor-pointer"
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>Open on Phone (QR Code & Link)</span>
+            </button>
+
+            <p className="text-[11px] text-slate-500 mt-1">
               Requires permission to view and update your Google Sheets.
             </p>
           </div>
+
+          <MobileQrModal isOpen={isQrModalOpen} onClose={() => setIsQrModalOpen(false)} />
         </div>
       </div>
     );
@@ -472,6 +486,15 @@ export default function App() {
 
           {/* Sync indicator & User Profile */}
           <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+            {/* Open on Phone QR button */}
+            <button
+              onClick={() => setIsQrModalOpen(true)}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-300 hover:bg-slate-900 transition-colors cursor-pointer"
+              title="Open on Mobile / Show QR Code"
+            >
+              <Smartphone className="w-4 h-4" />
+            </button>
+
             {/* Auto-sync live countdown pill */}
             {autoRefreshInterval > 0 && (
               <div
@@ -731,6 +754,9 @@ export default function App() {
           isUpdating={isUpdatingCell}
         />
       )}
+
+      {/* Mobile QR Modal */}
+      <MobileQrModal isOpen={isQrModalOpen} onClose={() => setIsQrModalOpen(false)} />
     </div>
   );
 }
