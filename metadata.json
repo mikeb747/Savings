@@ -1,0 +1,6 @@
+{
+  "name": "Savings",
+  "description": "Mobile-friendly real-time PWA dashboard for your Google Sheets Savings pivot table.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
