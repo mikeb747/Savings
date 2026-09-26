@@ -49,18 +49,7 @@ export const SavingsOverview: React.FC<Props> = ({
               </span>
             </div>
 
-            {/* Quick Spreadsheet External Link */}
-            {spreadsheetUrl && (
-              <a
-                href={spreadsheetUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-emerald-300 transition-colors bg-slate-800/60 px-2.5 py-1 rounded-lg border border-slate-700/60"
-              >
-                <span>{spreadsheetTitle} ({sheetName})</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            )}
+            {/* Live status badge */}
           </div>
 
           {/* Big Savings Number */}
@@ -75,7 +64,7 @@ export const SavingsOverview: React.FC<Props> = ({
               <p className="text-xs text-slate-400 mt-1 flex items-center gap-1.5">
                 <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
                 <span>
-                  Primary bucket: <strong className="text-emerald-300">{metrics.topCategory.name}</strong> ({((metrics.topCategory.amount / (metrics.totalSavings || 1)) * 100).toFixed(0)}%)
+                  Primary account: <strong className="text-emerald-300">{metrics.topCategory.name}</strong> ({((metrics.topCategory.amount / (metrics.columnBTotal || metrics.totalSavings || 1)) * 100).toFixed(0)}%)
                 </span>
               </p>
             )}
@@ -125,14 +114,26 @@ export const SavingsOverview: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Visual Category Breakdown Progress Bar */}
+      {/* Visual Category Breakdown Progress Bar (Derived strictly from Column B) */}
       {metrics.categoryBreakdown.length > 0 && (
         <div className="bg-slate-900/80 rounded-2xl p-4 border border-slate-800/80 space-y-3">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-slate-300 uppercase tracking-wider text-[11px]">
-              Asset & Account Allocation
+            <div>
+              <span className="font-semibold text-slate-200 uppercase tracking-wider text-[11px]">
+                Asset & Account Allocation
+              </span>
+              <span className="text-[10px] text-emerald-400 font-mono ml-2">
+                (Column B: {data.headers[1] || 'Balance'})
+              </span>
+            </div>
+            <span className="text-slate-400 font-mono text-[11px]">
+              Total:{' '}
+              {new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: data.currencySymbol === '€' ? 'EUR' : data.currencySymbol === '£' ? 'GBP' : 'USD',
+                maximumFractionDigits: 0,
+              }).format(metrics.columnBTotal)}
             </span>
-            <span className="text-slate-500">{metrics.categoryBreakdown.length} Categories</span>
           </div>
 
           {/* Stacked Percentage Bar */}
@@ -178,49 +179,6 @@ export const SavingsOverview: React.FC<Props> = ({
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-      )}
-
-      {/* Timeline Progression if multi-column timeline exists */}
-      {metrics.monthlyTimeline.length > 1 && (
-        <div className="bg-slate-900/80 rounded-2xl p-4 border border-slate-800/80 space-y-3">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-slate-300 uppercase tracking-wider text-[11px]">
-              Period Progression
-            </span>
-            <span className="text-slate-500 font-mono text-[11px]">Pivot Columns</span>
-          </div>
-
-          <div className="grid grid-cols-2 xs:grid-cols-4 sm:grid-cols-6 gap-2">
-            {metrics.monthlyTimeline.map((item, idx) => {
-              const maxAmount = Math.max(...metrics.monthlyTimeline.map((m) => m.amount), 1);
-              const heightPct = Math.max((item.amount / maxAmount) * 100, 10);
-              return (
-                <div
-                  key={idx}
-                  className="bg-slate-950/60 rounded-xl p-2.5 flex flex-col justify-end items-center border border-slate-800/50 h-28 relative group hover:border-emerald-500/40 transition-colors"
-                >
-                  <div className="w-full h-14 flex items-end justify-center mb-1">
-                    <div
-                      style={{ height: `${heightPct}%` }}
-                      className="w-5 bg-gradient-to-t from-emerald-600 to-teal-400 rounded-t-md transition-all duration-300 group-hover:from-emerald-500 group-hover:to-teal-300 shadow-sm"
-                    />
-                  </div>
-                  <div className="text-[10px] text-slate-400 font-medium truncate w-full text-center">
-                    {item.label}
-                  </div>
-                  <div className="text-[11px] font-bold text-slate-200 mt-0.5 truncate w-full text-center">
-                    {new Intl.NumberFormat('en-US', {
-                      style: 'currency',
-                      currency: data.currencySymbol === '€' ? 'EUR' : data.currencySymbol === '£' ? 'GBP' : 'USD',
-                      notation: 'compact',
-                      maximumFractionDigits: 1,
-                    }).format(item.amount)}
-                  </div>
-                </div>
-              );
-            })}
           </div>
         </div>
       )}

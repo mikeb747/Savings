@@ -28,6 +28,7 @@ import {
 } from './types/savings';
 import { GoogleSignInButton } from './components/GoogleSignInButton';
 import { SavingsOverview } from './components/SavingsOverview';
+import { EarningsChart } from './components/EarningsChart';
 import { PivotTableView } from './components/PivotTableView';
 import { UpdateDataModal } from './components/UpdateDataModal';
 import { SpreadsheetSelectorModal } from './components/SpreadsheetSelectorModal';
@@ -44,6 +45,7 @@ import {
   ChevronDown,
   Layers,
   BarChart3,
+  BarChart2,
   Table,
 } from 'lucide-react';
 
@@ -80,7 +82,14 @@ export default function App() {
   } | null>(null);
   const [isUpdatingCell, setIsUpdatingCell] = useState(false);
   const [isCreatingSpreadsheet, setIsCreatingSpreadsheet] = useState(false);
-  const [activeView, setActiveView] = useState<'overview' | 'table' | 'both'>('both');
+  const [activeView, setActiveView] = useState<'overview' | 'chart' | 'table' | 'both'>('both');
+  const [customRange, setCustomRange] = useState<string>(() => {
+    try {
+      return localStorage.getItem('savings_custom_range') || '';
+    } catch {
+      return '';
+    }
+  });
 
   // Network offline state
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
@@ -166,13 +175,15 @@ export default function App() {
 
   // Load data for a spreadsheet
   const loadSpreadsheetData = useCallback(
-    async (authToken: string, spreadsheetId: string, sheetTitle?: string) => {
+    async (authToken: string, spreadsheetId: string, sheetTitle?: string, rangeToUse?: string) => {
       setIsLoadingData(true);
       setError(null);
       setMissingPivotTab(false);
 
+      const targetRange = rangeToUse !== undefined ? rangeToUse : customRange;
+
       try {
-        const data = await fetchPivotTableData(authToken, spreadsheetId, 'PivotTable');
+        const data = await fetchPivotTableData(authToken, spreadsheetId, 'PivotTable', targetRange || undefined);
         setPivotData(data);
         setIsUsingCachedData(false);
 
@@ -195,7 +206,7 @@ export default function App() {
         setIsLoadingData(false);
       }
     },
-    [],
+    [customRange],
   );
 
   // Discover spreadsheets once token is available
@@ -332,6 +343,17 @@ export default function App() {
     }
   };
 
+  // Update sheet range (e.g. from long-press in PivotTableView footer)
+  const handleUpdateRange = async (newRange: string) => {
+    setCustomRange(newRange);
+    try {
+      localStorage.setItem('savings_custom_range', newRange);
+    } catch {}
+    if (token && currentFile) {
+      await loadSpreadsheetData(token, currentFile.id, currentFile.name, newRange);
+    }
+  };
+
   // Handle cell update via Google Sheets API (called after user confirmation)
   const handleExecuteCellUpdate = async (cellCoordinate: string, newValue: string) => {
     if (!token || !currentFile || !pivotData) {
@@ -347,7 +369,7 @@ export default function App() {
         newValue,
       );
       // Reload fresh data to reflect new pivot totals
-      await loadSpreadsheetData(token, currentFile.id, currentFile.name);
+      await loadSpreadsheetData(token, currentFile.id, currentFile.name, customRange || undefined);
     } finally {
       setIsUpdatingCell(false);
     }
@@ -567,11 +589,11 @@ export default function App() {
         {pivotData && (
           <div className="space-y-4">
             {/* View Mode Switcher on mobile/desktop */}
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs overflow-x-auto custom-scrollbar">
                 <button
                   onClick={() => setActiveView('both')}
-                  className={`px-3 py-1 rounded-lg font-medium transition-all ${
+                  className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer ${
                     activeView === 'both'
                       ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                       : 'text-slate-400 hover:text-slate-200'
@@ -584,7 +606,7 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => setActiveView('overview')}
-                  className={`px-3 py-1 rounded-lg font-medium transition-all ${
+                  className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer ${
                     activeView === 'overview'
                       ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                       : 'text-slate-400 hover:text-slate-200'
@@ -596,8 +618,21 @@ export default function App() {
                   </span>
                 </button>
                 <button
+                  onClick={() => setActiveView('chart')}
+                  className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer ${
+                    activeView === 'chart'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <BarChart2 className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Earnings Chart</span>
+                  </span>
+                </button>
+                <button
                   onClick={() => setActiveView('table')}
-                  className={`px-3 py-1 rounded-lg font-medium transition-all ${
+                  className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer ${
                     activeView === 'table'
                       ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                       : 'text-slate-400 hover:text-slate-200'
@@ -640,6 +675,13 @@ export default function App() {
               />
             )}
 
+            {/* Earnings Chart View (matching user image with account type filters) */}
+            {(activeView === 'both' || activeView === 'chart') && (
+              <EarningsChart
+                data={pivotData}
+              />
+            )}
+
             {/* Full Pivot Table View */}
             {(activeView === 'both' || activeView === 'table') && (
               <PivotTableView
@@ -648,6 +690,7 @@ export default function App() {
                   setSelectedCellForEdit({ cell, rowLabel, colHeader });
                   setIsUpdateModalOpen(true);
                 }}
+                onUpdateRange={handleUpdateRange}
               />
             )}
           </div>

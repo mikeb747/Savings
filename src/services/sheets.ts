@@ -1,4 +1,11 @@
-import { GoogleSheetFile, PivotTableCell, PivotTableData, PivotTableRow, SavingsMetrics } from '../types/savings';
+import {
+  GoogleSheetFile,
+  PivotTableCell,
+  PivotTableData,
+  PivotTableRow,
+  SavingsMetrics,
+  AccountEarningsItem,
+} from '../types/savings';
 
 const PALETTE = [
   '#10b981', // emerald
@@ -109,12 +116,39 @@ export const extractCurrencySymbol = (sample: string): string => {
   return '$';
 };
 
+
+// Detect account type based on name and cells
+export const detectAccountType = (accountName: string, rowCells?: PivotTableCell[]): string => {
+  const lower = accountName.toLowerCase();
+  if (lower.includes('isa')) return 'Cash ISA';
+  if (lower.includes('regular') || lower.includes('reg saver') || (lower.includes('digital') && lower.includes('saver'))) {
+    return 'Regular Saver';
+  }
+  if (lower.includes('xmas') || lower.includes('christmas')) return 'Xmas Saver';
+  if (lower.includes('notice') || lower.includes('fixed') || lower.includes('bond') || lower.includes('term')) {
+    return 'Fixed / Notice';
+  }
+  if (lower.includes('flex') || lower.includes('easy') || lower.includes('instant')) return 'Easy Access';
+  if (lower.includes('bs') || lower.includes('building society')) return 'Building Society';
+
+  if (rowCells) {
+    for (const c of rowCells) {
+      const val = c.rawValue.toLowerCase();
+      if (val.includes('isa')) return 'Cash ISA';
+      if (val.includes('regular')) return 'Regular Saver';
+      if (val.includes('notice')) return 'Notice Account';
+    }
+  }
+  return 'Standard Savings';
+};
+
 // Parse raw 2D sheet values into structured PivotTableData
 export const parsePivotTable = (
   rawValues: string[][],
   spreadsheetId: string,
   spreadsheetTitle: string,
   sheetName: string,
+  appliedRange?: string,
 ): PivotTableData => {
   if (!rawValues || rawValues.length === 0) {
     throw new Error(`The '${sheetName}' tab is empty.`);
@@ -140,7 +174,7 @@ export const parsePivotTable = (
   });
 
   const headerRow = normalizedRows[headerRowIndex] || [];
-  const headers = headerRow.map((h, i) => (h && h.trim()) || (i === 0 ? 'Category / Account' : `Column ${colIndexToLetter(i)}`));
+  const headers = headerRow.map((h, i) => (h && h.trim()) || (i === 0 ? 'Account / Category' : `Column ${colIndexToLetter(i)}`));
 
   let detectedCurrency = '$';
   const parsedRows: PivotTableRow[] = [];
@@ -226,19 +260,71 @@ export const parsePivotTable = (
     overallTotal = parsedRows.reduce((acc, row) => acc + (row.totalValue || 0), 0);
   }
 
-  // Category breakdown metrics
+  // REQUIREMENT: Values on 'Asset & Account Allocation' box must ONLY come from Column B (index 1)
+  const colBTotal = parsedRows
+    .filter((r) => !r.isTotalRow)
+    .reduce((sum, r) => sum + (r.cells[1]?.numericValue || 0), 0);
+
   const categoryBreakdown = parsedRows
-    .filter((r) => !r.isTotalRow && (r.totalValue !== undefined && r.totalValue > 0))
+    .filter((r) => !r.isTotalRow && r.cells[1]?.numericValue !== null && (r.cells[1]?.numericValue || 0) > 0)
     .map((r, i) => {
-      const amt = r.totalValue || 0;
+      const amt = r.cells[1]?.numericValue || 0;
       return {
         category: r.label,
         amount: amt,
-        percentage: overallTotal > 0 ? (amt / overallTotal) * 100 : 0,
+        percentage: colBTotal > 0 ? (amt / colBTotal) * 100 : 0,
         color: PALETTE[i % PALETTE.length],
       };
     })
     .sort((a, b) => b.amount - a.amount);
+
+  // Available candidate columns for Earnings chart
+  const availableEarningsColumns: { colIndex: number; name: string }[] = [];
+  for (let c = 1; c < headers.length; c++) {
+    // Check if column has any numbers in non-total rows
+    const hasNumbers = parsedRows.some((r) => !r.isTotalRow && r.cells[c]?.numericValue !== null);
+    if (hasNumbers) {
+      availableEarningsColumns.push({ colIndex: c, name: headers[c] || `Column ${colIndexToLetter(c)}` });
+    }
+  }
+
+  // Identify preferred earnings column (check for "interest", "earning", "return", "projected", "annual")
+  let preferredEarningsColIdx = availableEarningsColumns.length > 0 ? availableEarningsColumns[0].colIndex : 1;
+  const keywordCol = availableEarningsColumns.find((col) => {
+    const l = col.name.toLowerCase();
+    return l.includes('interest') || l.includes('earning') || l.includes('projected') || l.includes('yield') || l.includes('return');
+  });
+
+  if (keywordCol) {
+    preferredEarningsColIdx = keywordCol.colIndex;
+  } else if (availableEarningsColumns.length > 1) {
+    // Default to last numeric column if multiple columns exist and none matched keyword
+    preferredEarningsColIdx = availableEarningsColumns[availableEarningsColumns.length - 1].colIndex;
+  }
+
+  // Generate account earnings items for the chart
+  const accountEarnings: AccountEarningsItem[] = parsedRows
+    .filter((r) => !r.isTotalRow)
+    .map((r) => {
+      const cell = r.cells[preferredEarningsColIdx];
+      const val = cell?.numericValue || 0;
+      return {
+        accountName: r.label,
+        accountType: detectAccountType(r.label, r.cells),
+        earnings: val,
+        formattedEarnings:
+          cell?.formattedValue && cell.formattedValue !== '-'
+            ? cell.formattedValue
+            : new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: detectedCurrency === '€' ? 'EUR' : detectedCurrency === '£' ? 'GBP' : 'USD',
+                minimumFractionDigits: 2,
+              }).format(val),
+        columnName: headers[preferredEarningsColIdx] || 'Earnings',
+        balance: r.cells[1]?.numericValue || undefined,
+        rowIndex: r.rowIndex,
+      };
+    });
 
   // Timeline (e.g. Month by month if columns represent months/dates)
   const timelineColumns = headers
@@ -251,12 +337,10 @@ export const parsePivotTable = (
     });
 
   const monthlyTimeline = timelineColumns.map(({ header, colIdx }) => {
-    // If grandTotalRow exists, get its value for this column
     let colTotal = 0;
     if (grandTotalRow && grandTotalRow.cells[colIdx]?.numericValue !== null) {
       colTotal = grandTotalRow.cells[colIdx]?.numericValue || 0;
     } else {
-      // Sum row values in this column
       colTotal = parsedRows.reduce((acc, r) => acc + (r.cells[colIdx]?.numericValue || 0), 0);
     }
     return {
@@ -272,8 +356,12 @@ export const parsePivotTable = (
 
   const metrics: SavingsMetrics = {
     totalSavings: overallTotal,
+    columnBTotal: colBTotal,
     currencySymbol: detectedCurrency,
     categoryBreakdown,
+    accountEarnings,
+    availableEarningsColumns,
+    selectedEarningsColIndex: preferredEarningsColIdx,
     monthlyTimeline,
     topCategory,
     rowCount: parsedRows.length,
@@ -287,11 +375,13 @@ export const parsePivotTable = (
     maximumFractionDigits: 2,
   }).format(overallTotal);
 
+  const finalRange = appliedRange || `${sheetName}!A1:${colIndexToLetter(maxCols - 1)}${normalizedRows.length}`;
+
   return {
     spreadsheetId,
     spreadsheetTitle,
     sheetName,
-    range: `${sheetName}!A1:${colIndexToLetter(maxCols - 1)}${normalizedRows.length}`,
+    range: finalRange,
     rawValues,
     headers,
     rows: parsedRows,
@@ -305,11 +395,12 @@ export const parsePivotTable = (
   };
 };
 
-// Fetch PivotTable data from Google Sheets
+// Fetch PivotTable data from Google Sheets (supports custom range)
 export const fetchPivotTableData = async (
   token: string,
   spreadsheetId: string,
   preferredSheetName = 'PivotTable',
+  customRange?: string,
 ): Promise<PivotTableData> => {
   // First, verify tab exists or find similar
   const metadata = await getSpreadsheetMetadata(token, spreadsheetId);
@@ -317,12 +408,10 @@ export const fetchPivotTableData = async (
     (name) => name.toLowerCase() === preferredSheetName.toLowerCase() || name.toLowerCase() === 'pivottable',
   );
 
-  // If exact PivotTable is not found, check for any sheet with 'pivot' in name
   if (!targetSheet) {
     targetSheet = metadata.sheetNames.find((name) => name.toLowerCase().includes('pivot'));
   }
 
-  // If still not found, check if there's only 1 sheet or pick first
   if (!targetSheet) {
     if (metadata.sheetNames.length === 1) {
       targetSheet = metadata.sheetNames[0];
@@ -333,8 +422,12 @@ export const fetchPivotTableData = async (
     }
   }
 
-  const range = `'${targetSheet}'!A1:ZZ300`;
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueRenderOption=FORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`;
+  let rangeToFetch = customRange ? customRange.trim() : `'${targetSheet}'!A1:ZZ300`;
+  if (customRange && !customRange.includes('!')) {
+    rangeToFetch = `'${targetSheet}'!${customRange.trim()}`;
+  }
+
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(rangeToFetch)}?valueRenderOption=FORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`;
 
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
@@ -349,10 +442,10 @@ export const fetchPivotTableData = async (
   const rawValues: string[][] = data.values || [];
 
   if (rawValues.length === 0) {
-    throw new Error(`The '${targetSheet}' tab contains no data yet.`);
+    throw new Error(`The range '${rangeToFetch}' contains no data.`);
   }
 
-  return parsePivotTable(rawValues, spreadsheetId, metadata.title, targetSheet);
+  return parsePivotTable(rawValues, spreadsheetId, metadata.title, targetSheet, rangeToFetch);
 };
 
 // Update a specific cell in the spreadsheet
@@ -394,14 +487,18 @@ export const createDefaultSavingsSpreadsheet = async (
   token: string,
 ): Promise<{ id: string; name: string; webViewLink: string }> => {
   const samplePivotValues = [
-    ['Category / Account', 'Q1 (Jan-Mar)', 'Q2 (Apr-Jun)', 'Q3 (Jul-Sep)', 'Q4 (Oct-Dec)', 'Total Saved'],
-    ['Emergency Fund', '$3,500.00', '$3,500.00', '$1,500.00', '$1,500.00', '$10,000.00'],
-    ['High-Yield Savings (4.5%)', '$2,400.00', '$2,600.00', '$2,800.00', '$3,200.00', '$11,000.00'],
-    ['Index Funds (S&P 500)', '$4,000.00', '$4,200.00', '$4,500.00', '$5,300.00', '$18,000.00'],
-    ['Retirement / Roth IRA', '$1,750.00', '$1,750.00', '$1,750.00', '$1,750.00', '$7,000.00'],
-    ['House Down Payment', '$2,000.00', '$2,500.00', '$3,000.00', '$3,500.00', '$11,000.00'],
-    ['Travel & Holiday Fund', '$1,200.00', '$1,500.00', '$1,000.00', '$800.00', '$4,500.00'],
-    ['Grand Total', '$14,850.00', '$16,050.00', '$14,550.00', '$16,050.00', '$61,500.00'],
+    ['Account', 'Balance', 'Total_Interest', 'AER (%)', 'Account Type'],
+    ['Coop', '£3,000.00', '£120.00', '4.00%', 'Standard'],
+    ['First Direct', '£3,500.00', '£140.00', '4.00%', 'Standard'],
+    ['Lloyds Regular Saver', '£2,000.00', '£130.00', '6.50%', 'Regular Saver'],
+    ['Monmouthshire BS', '£4,000.00', '£200.00', '5.00%', 'Building Society'],
+    ['Nationwide Flex Regular', '£1,500.00', '£90.00', '6.00%', 'Regular Saver'],
+    ['Natwest Digital regular saver', '£3,800.00', '£266.00', '7.00%', 'Regular Saver'],
+    ['Principality 12 Xmas', '£1,000.00', '£70.00', '7.00%', 'Xmas Saver'],
+    ['RBS Digital regular saver', '£3,800.00', '£266.00', '7.00%', 'Regular Saver'],
+    ['Zopa', '£800.00', '£38.00', '4.75%', 'Easy Access'],
+    ['eToro (Cash ISA)', '£22,000.00', '£1,210.00', '5.50%', 'Cash ISA'],
+    ['Grand Total', '£45,400.00', '£2,530.00', '5.57%', 'Total'],
   ];
 
   const createUrl = 'https://sheets.googleapis.com/v4/spreadsheets';
@@ -486,16 +583,21 @@ export const addPivotTableTab = async (
 
   // Populate with starting structure
   const samplePivotValues = [
-    ['Category / Account', 'Q1 (Jan-Mar)', 'Q2 (Apr-Jun)', 'Q3 (Jul-Sep)', 'Q4 (Oct-Dec)', 'Total Saved'],
-    ['Emergency Fund', '$3,500.00', '$3,500.00', '$1,500.00', '$1,500.00', '$10,000.00'],
-    ['High-Yield Savings (4.5%)', '$2,400.00', '$2,600.00', '$2,800.00', '$3,200.00', '$11,000.00'],
-    ['Index Funds (S&P 500)', '$4,000.00', '$4,200.00', '$4,500.00', '$5,300.00', '$18,000.00'],
-    ['Retirement / Roth IRA', '$1,750.00', '$1,750.00', '$1,750.00', '$1,750.00', '$7,000.00'],
-    ['House Down Payment', '$2,000.00', '$2,500.00', '$3,000.00', '$3,500.00', '$11,000.00'],
-    ['Grand Total', '$13,650.00', '$14,550.00', '$13,550.00', '$15,250.00', '$57,000.00'],
+    ['Account', 'Balance', 'Total_Interest', 'AER (%)', 'Account Type'],
+    ['Coop', '£3,000.00', '£120.00', '4.00%', 'Standard'],
+    ['First Direct', '£3,500.00', '£140.00', '4.00%', 'Standard'],
+    ['Lloyds Regular Saver', '£2,000.00', '£130.00', '6.50%', 'Regular Saver'],
+    ['Monmouthshire BS', '£4,000.00', '£200.00', '5.00%', 'Building Society'],
+    ['Nationwide Flex Regular', '£1,500.00', '£90.00', '6.00%', 'Regular Saver'],
+    ['Natwest Digital regular saver', '£3,800.00', '£266.00', '7.00%', 'Regular Saver'],
+    ['Principality 12 Xmas', '£1,000.00', '£70.00', '7.00%', 'Xmas Saver'],
+    ['RBS Digital regular saver', '£3,800.00', '£266.00', '7.00%', 'Regular Saver'],
+    ['Zopa', '£800.00', '£38.00', '4.75%', 'Easy Access'],
+    ['eToro (Cash ISA)', '£22,000.00', '£1,210.00', '5.50%', 'Cash ISA'],
+    ['Grand Total', '£45,400.00', '£2,530.00', '5.57%', 'Total'],
   ];
 
-  const populateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'PivotTable'!A1:F7?valueInputOption=USER_ENTERED`;
+  const populateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'PivotTable'!A1:E12?valueInputOption=USER_ENTERED`;
   await fetch(populateUrl, {
     method: 'PUT',
     headers: {

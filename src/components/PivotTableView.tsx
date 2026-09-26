@@ -5,11 +5,48 @@ import { Search, Edit3, ArrowRight, Table, Sparkles, Filter } from 'lucide-react
 interface Props {
   data: PivotTableData;
   onSelectCellToEdit: (cell: PivotTableCell, rowLabel: string, colHeader: string) => void;
+  onUpdateRange?: (newRange: string) => void;
 }
 
-export const PivotTableView: React.FC<Props> = ({ data, onSelectCellToEdit }) => {
+export const PivotTableView: React.FC<Props> = ({ data, onSelectCellToEdit, onUpdateRange }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const { headers, rows, grandTotalRow, sheetName, spreadsheetTitle } = data;
+
+  // Long press range editing state
+  const [isEditingRange, setIsEditingRange] = useState(false);
+  const [rangeInput, setRangeInput] = useState(data.range);
+  const [isPressing, setIsPressing] = useState(false);
+  const pressTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  // Sync range input with current range
+  React.useEffect(() => {
+    setRangeInput(data.range);
+  }, [data.range]);
+
+  const handleStartPress = () => {
+    setIsPressing(true);
+    if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
+    pressTimerRef.current = setTimeout(() => {
+      setIsPressing(false);
+      setIsEditingRange(true);
+    }, 550); // 550ms long press threshold
+  };
+
+  const handleCancelPress = () => {
+    setIsPressing(false);
+    if (pressTimerRef.current) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+  };
+
+  const handleSaveRange = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (rangeInput.trim()) {
+      onUpdateRange?.(rangeInput.trim());
+      setIsEditingRange(false);
+    }
+  };
 
   // Filter rows based on search
   const filteredRows = rows.filter((r) =>
@@ -87,7 +124,7 @@ export const PivotTableView: React.FC<Props> = ({ data, onSelectCellToEdit }) =>
 
           {/* Table Body */}
           <tbody className="divide-y divide-slate-800/60 font-mono">
-            {filteredRows.map((row, rIdx) => (
+            {filteredRows.map((row) => (
               <tr
                 key={row.rowIndex}
                 className="hover:bg-slate-800/40 transition-colors group"
@@ -133,7 +170,7 @@ export const PivotTableView: React.FC<Props> = ({ data, onSelectCellToEdit }) =>
                 </td>
 
                 {/* Grand Total Cells */}
-                {grandTotalRow.cells.slice(1).map((cell, cIdx) => (
+                {grandTotalRow.cells.slice(1).map((cell) => (
                   <td
                     key={cell.sheetCell}
                     className="p-3 text-right text-emerald-300 whitespace-nowrap"
@@ -147,11 +184,60 @@ export const PivotTableView: React.FC<Props> = ({ data, onSelectCellToEdit }) =>
         </table>
       </div>
 
-      {/* Footer Info */}
-      <div className="p-3 bg-slate-950/60 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-        <span className="font-mono">
-          Sheet Range: <strong className="text-slate-300">{data.range}</strong>
-        </span>
+      {/* Footer Info with Long-Press Editable Range */}
+      <div className="p-3 bg-slate-950/60 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-slate-400">
+        {!isEditingRange ? (
+          <div
+            onMouseDown={handleStartPress}
+            onMouseUp={handleCancelPress}
+            onMouseLeave={handleCancelPress}
+            onTouchStart={handleStartPress}
+            onTouchEnd={handleCancelPress}
+            onTouchCancel={handleCancelPress}
+            className={`font-mono inline-flex items-center gap-2 px-2.5 py-1 rounded-lg cursor-pointer transition-all select-none ${
+              isPressing
+                ? 'bg-emerald-500/30 text-emerald-200 ring-2 ring-emerald-400 scale-[0.98]'
+                : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800'
+            }`}
+            title="Long press to edit Sheet Range"
+          >
+            <span>
+              Sheet Range: <strong className="text-emerald-300">{data.range}</strong>
+            </span>
+            <span className="text-[10px] text-slate-500 border border-slate-700/60 px-1 rounded">
+              {isPressing ? 'Holding...' : 'Hold to edit'}
+            </span>
+          </div>
+        ) : (
+          <form onSubmit={handleSaveRange} className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-mono text-slate-400 text-xs">Range:</span>
+            <input
+              type="text"
+              value={rangeInput}
+              onChange={(e) => setRangeInput(e.target.value)}
+              placeholder="e.g. PivotTable!A1:E13"
+              className="bg-slate-900 border border-emerald-500/80 rounded-lg px-2 py-0.5 text-xs font-mono text-emerald-200 focus:outline-none focus:ring-1 focus:ring-emerald-400 w-48"
+              autoFocus
+            />
+            <button
+              type="submit"
+              className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-semibold cursor-pointer"
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setRangeInput(data.range);
+                setIsEditingRange(false);
+              }}
+              className="px-2 py-0.5 bg-slate-800 text-slate-400 hover:text-slate-200 rounded text-[11px]"
+            >
+              Cancel
+            </button>
+          </form>
+        )}
+
         <span>
           Showing {filteredRows.length} of {rows.length} categories
         </span>

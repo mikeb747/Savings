@@ -40,8 +40,19 @@ export interface PivotTableCell {
   isTotal: boolean;
 }
 
+export interface AccountEarningsItem {
+  accountName: string;
+  accountType: string;
+  earnings: number;
+  formattedEarnings: string;
+  columnName: string;
+  balance?: number;
+  rowIndex: number;
+}
+
 export interface SavingsMetrics {
   totalSavings: number;
+  columnBTotal: number;
   currencySymbol: string;
   categoryBreakdown: {
     category: string;
@@ -49,6 +60,12 @@ export interface SavingsMetrics {
     percentage: number;
     color: string;
   }[];
+  accountEarnings: AccountEarningsItem[];
+  availableEarningsColumns: {
+    colIndex: number;
+    name: string;
+  }[];
+  selectedEarningsColIndex: number;
   monthlyTimeline: {
     label: string;
     amount: number;
