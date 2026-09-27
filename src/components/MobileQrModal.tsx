@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Smartphone, QrCode, Copy, Check, X, ExternalLink, Share, Download } from 'lucide-react';
+import { Smartphone, QrCode, Copy, Check, X, ExternalLink, Share, Download, Globe } from 'lucide-react';
+import { APP_VERSION, GITHUB_PAGES_URL } from '../config/version';
 
 interface Props {
   isOpen: boolean;
@@ -9,19 +10,35 @@ interface Props {
 export const MobileQrModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const [copied, setCopied] = useState(false);
 
+  // Compute the accurate full URL (preventing origin-only truncation on GitHub Pages)
+  const getInitialUrl = (): string => {
+    if (typeof window !== 'undefined') {
+      const { hostname, origin, pathname } = window.location;
+      // If we are on GitHub Pages (e.g. mikeb747.github.io), always include /Savings/
+      if (hostname.includes('github.io')) {
+        const path = pathname.startsWith('/Savings') ? pathname : '/Savings/';
+        return `${origin}${path.endsWith('/') ? path : path + '/'}`;
+      }
+      // If previewing in AI Studio or localhost, use current URL or default to GitHub Pages
+      if (hostname.includes('europe-west2.run.app') || hostname === 'localhost' || hostname === '0.0.0.0') {
+        // Return GitHub Pages URL so scanning on phone takes user to their public deployed site!
+        return GITHUB_PAGES_URL;
+      }
+      return `${origin}${pathname}`;
+    }
+    return GITHUB_PAGES_URL;
+  };
+
+  const [activeUrl, setActiveUrl] = useState<string>(getInitialUrl);
+
   if (!isOpen) return null;
 
-  const currentUrl =
-    typeof window !== 'undefined' && window.location.origin
-      ? window.location.origin
-      : 'https://ais-pre-v2hrf6yj7lzypxdyabuz76-921731801345.europe-west2.run.app';
-
-  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(
-    currentUrl,
+  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(
+    activeUrl,
   )}&bgcolor=0f172a&color=10b981&margin=2`;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(currentUrl);
+    navigator.clipboard.writeText(activeUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -36,7 +53,12 @@ export const MobileQrModal: React.FC<Props> = ({ isOpen, onClose }) => {
               <Smartphone className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-semibold text-sm text-slate-100">Open on Your Phone</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-sm text-slate-100">Open on Your Phone</h3>
+                <span className="text-[10px] font-mono px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-md">
+                  {APP_VERSION}
+                </span>
+              </div>
               <p className="text-xs text-slate-400">Scan QR or copy the PWA link</p>
             </div>
           </div>
@@ -63,17 +85,48 @@ export const MobileQrModal: React.FC<Props> = ({ isOpen, onClose }) => {
             </div>
           </div>
 
+          {/* URL Switcher / Selector */}
+          <div className="w-full flex items-center justify-between text-xs px-1">
+            <span className="text-slate-400 text-[11px] font-medium">Target URL:</span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setActiveUrl(GITHUB_PAGES_URL)}
+                className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer ${
+                  activeUrl === GITHUB_PAGES_URL
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-semibold'
+                    : 'text-slate-400 hover:text-slate-200 bg-slate-950 border border-slate-800'
+                }`}
+              >
+                GitHub Pages
+              </button>
+              {typeof window !== 'undefined' && !window.location.hostname.includes('github.io') && (
+                <button
+                  type="button"
+                  onClick={() => setActiveUrl(window.location.href)}
+                  className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors cursor-pointer ${
+                    activeUrl !== GITHUB_PAGES_URL
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-semibold'
+                      : 'text-slate-400 hover:text-slate-200 bg-slate-950 border border-slate-800'
+                  }`}
+                >
+                  Dev Preview
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Copy Link Button */}
           <div className="w-full flex items-center gap-2">
             <input
               type="text"
               readOnly
-              value={currentUrl}
-              className="flex-1 px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs font-mono text-slate-300 truncate focus:outline-none"
+              value={activeUrl}
+              className="flex-1 px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs font-mono text-emerald-400 font-medium truncate focus:outline-none select-all"
             />
             <button
               onClick={handleCopy}
-              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer flex-shrink-0"
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer flex-shrink-0 shadow-sm shadow-emerald-950"
               title="Copy URL"
             >
               {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}

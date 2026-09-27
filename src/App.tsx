@@ -37,6 +37,7 @@ import { UpdateDataModal } from './components/UpdateDataModal';
 import { SpreadsheetSelectorModal } from './components/SpreadsheetSelectorModal';
 import { PwaInstallBanner } from './components/PwaInstallBanner';
 import { MobileQrModal } from './components/MobileQrModal';
+import { APP_VERSION } from './config/version';
 import {
   Wallet,
   Smartphone,
@@ -450,9 +451,14 @@ export default function App() {
           </div>
 
           <div>
-            <h1 className="text-3xl font-extrabold text-white tracking-tight sm:text-4xl">
-              Savings
-            </h1>
+            <div className="flex items-center justify-center gap-2">
+              <h1 className="text-3xl font-extrabold text-white tracking-tight sm:text-4xl">
+                Savings
+              </h1>
+              <span className="text-xs font-mono font-medium px-2 py-0.5 rounded-full bg-slate-800 text-emerald-400 border border-slate-700 shadow-sm">
+                {APP_VERSION}
+              </span>
+            </div>
             <p className="text-slate-400 text-sm mt-2 max-w-sm mx-auto">
               Real-time mobile PWA dashboard connected directly to your Google Sheets{' '}
               <strong className="text-emerald-400 font-mono">'Savings'</strong> spreadsheet and{' '}
@@ -498,6 +504,10 @@ export default function App() {
             <p className="text-[11px] text-slate-500 mt-1">
               Requires permission to view and update your Google Sheets.
             </p>
+
+            <p className="text-[10px] text-slate-600 font-mono pt-1">
+              Savings Dashboard • {APP_VERSION}
+            </p>
           </div>
 
           <MobileQrModal isOpen={isQrModalOpen} onClose={() => setIsQrModalOpen(false)} />
@@ -522,6 +532,9 @@ export default function App() {
                 <span className="font-extrabold text-sm tracking-tight text-white">Savings</span>
                 <span className="text-[10px] px-1.5 py-0.2 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full font-mono font-semibold">
                   PWA
+                </span>
+                <span className="text-[10px] px-1.5 py-0.2 bg-slate-800 text-slate-300 border border-slate-700 rounded font-mono font-medium">
+                  {APP_VERSION}
                 </span>
               </div>
 
@@ -817,6 +830,25 @@ export default function App() {
             )}
           </div>
         )}
+
+        {/* Footer with version */}
+        <footer className="pt-6 pb-4 text-center text-xs text-slate-500 font-mono border-t border-slate-900 mt-8 flex flex-col sm:flex-row items-center justify-between gap-2 px-2">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-300 font-medium">Savings</span>
+            <span className="px-1.5 py-0.2 bg-slate-900 text-emerald-400 border border-slate-800 rounded text-[11px]">
+              {APP_VERSION}
+            </span>
+            <span>•</span>
+            <span className="text-slate-500">PWA Dashboard</span>
+          </div>
+          <button
+            onClick={() => setIsQrModalOpen(true)}
+            className="text-slate-400 hover:text-emerald-400 transition-colors flex items-center gap-1 cursor-pointer text-[11px]"
+          >
+            <Smartphone className="w-3.5 h-3.5" />
+            <span>Share / QR Code</span>
+          </button>
+        </footer>
       </main>
 
       {/* Spreadsheet Selector Modal */}
