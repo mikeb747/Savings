@@ -5,6 +5,8 @@ import {
   PivotTableRow,
   SavingsMetrics,
   AccountEarningsItem,
+  OutgoingItem,
+  OutgoingsData,
 } from '../types/savings';
 
 const PALETTE = [
@@ -608,4 +610,284 @@ export const addPivotTableTab = async (
       values: samplePivotValues,
     }),
   });
+};
+
+// Parse UK or ISO dates (e.g. "26/10/2026", "2026-10-26")
+export const parseOutgoingDate = (dateStr?: string | null): Date | null => {
+  if (!dateStr || typeof dateStr !== 'string') return null;
+  const trimmed = dateStr.trim();
+  if (
+    !trimmed ||
+    trimmed.toLowerCase().includes('update') ||
+    trimmed.toLowerCase().includes('tbd') ||
+    trimmed.toLowerCase().includes('n/a')
+  ) {
+    return null;
+  }
+
+  // DD/MM/YYYY or DD-MM-YYYY format
+  const ukMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (ukMatch) {
+    const day = parseInt(ukMatch[1], 10);
+    const month = parseInt(ukMatch[2], 10) - 1;
+    const year = parseInt(ukMatch[3], 10);
+    const d = new Date(year, month, day);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // YYYY-MM-DD format
+  const isoMatch = trimmed.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10) - 1;
+    const day = parseInt(isoMatch[3], 10);
+    const d = new Date(year, month, day);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  const standardParsed = new Date(trimmed);
+  return isNaN(standardParsed.getTime()) ? null : standardParsed;
+};
+
+// Parse raw 2D values from 'Outgoings' tab
+export const parseOutgoingsSheet = (
+  rawValues: string[][],
+  spreadsheetId: string,
+  sheetName: string,
+  defaultCurrency = '£',
+): OutgoingsData => {
+  if (!rawValues || rawValues.length === 0) {
+    return {
+      spreadsheetId,
+      sheetName,
+      headers: [],
+      items: [],
+      totalMonthlyCost: 0,
+      formattedTotalMonthlyCost: `${defaultCurrency}0.00`,
+      totalUntilSettled: 0,
+      formattedTotalUntilSettled: `${defaultCurrency}0.00`,
+      ongoingMonthlyCost: 0,
+      untilSettledMonthlyCost: 0,
+      currencySymbol: defaultCurrency,
+      lastUpdated: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+  }
+
+  // Header detection (find first row with at least 2 non-empty columns)
+  let headerRowIndex = 0;
+  for (let r = 0; r < Math.min(4, rawValues.length); r++) {
+    const row = rawValues[r] || [];
+    const nonEmpties = row.filter((c) => c && c.trim() !== '');
+    if (nonEmpties.length >= 2) {
+      headerRowIndex = r;
+      break;
+    }
+  }
+
+  const headerRow = rawValues[headerRowIndex] || [];
+  const headers = headerRow.map((h, i) => (h && h.trim()) || `Col ${colIndexToLetter(i)}`);
+
+  // Detect column indices based on header names
+  let nameColIdx = 0;
+  let costColIdx = 1;
+  let untilSettledColIdx = 2;
+  let typeColIdx = 3;
+  let freqColIdx = 4;
+  let methodColIdx = 5;
+  let nextDateColIdx = 6;
+  let instalmentsColIdx = 7;
+
+  headers.forEach((h, idx) => {
+    const lower = h.toLowerCase().trim();
+    if (lower === 'name' || lower.includes('expense') || lower.includes('outgoing') || lower.includes('description')) {
+      nameColIdx = idx;
+    } else if (lower.includes('cost') || lower === 'cost/month' || lower.includes('per month')) {
+      costColIdx = idx;
+    } else if (
+      lower.includes('settled') ||
+      lower.includes('amount until') ||
+      lower.includes('ammount until') ||
+      lower.includes('balance')
+    ) {
+      untilSettledColIdx = idx;
+    } else if (lower === 'type' || lower.includes('status')) {
+      typeColIdx = idx;
+    } else if (lower.includes('freq') || lower.includes('cadence')) {
+      freqColIdx = idx;
+    } else if (
+      lower.includes('method') ||
+      lower.includes('channel') ||
+      lower.includes('payment') && !lower.includes('date')
+    ) {
+      methodColIdx = idx;
+    } else if (lower.includes('date') || lower.includes('next payment') || lower.includes('due')) {
+      nextDateColIdx = idx;
+    } else if (
+      lower.includes('instalment') ||
+      lower.includes('installment') ||
+      lower.includes('remaining')
+    ) {
+      instalmentsColIdx = idx;
+    }
+  });
+
+  let currencySymbol = defaultCurrency;
+  const items: OutgoingItem[] = [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  for (let r = headerRowIndex + 1; r < rawValues.length; r++) {
+    const row = rawValues[r] || [];
+    const name = (row[nameColIdx] || '').trim();
+
+    // Skip blank rows or total rows
+    if (!name || name.toLowerCase().includes('total') || name.toLowerCase().includes('sum')) {
+      continue;
+    }
+
+    const rawCost = row[costColIdx] || '';
+    const cost = parseCleanNumber(rawCost) || 0;
+
+    // Detect currency symbol if present
+    if (typeof rawCost === 'string' && rawCost.trim()) {
+      const sym = extractCurrencySymbol(rawCost);
+      if (sym !== '$' || defaultCurrency === '$') {
+        currencySymbol = sym;
+      }
+    }
+
+    const rawUntilSettled = row[untilSettledColIdx] || '';
+    const amountUntilSettled = parseCleanNumber(rawUntilSettled);
+
+    const type = (row[typeColIdx] || '').trim() || (amountUntilSettled !== null ? 'Until settled' : 'Ongoing');
+    const frequency = (row[freqColIdx] || '').trim() || 'Monthly';
+    const paymentMethod = (row[methodColIdx] || '').trim() || 'Direct Debit';
+    const nextPaymentDate = (row[nextDateColIdx] || '').trim();
+
+    const parsedDate = parseOutgoingDate(nextPaymentDate);
+    let daysUntilDue: number | null = null;
+    if (parsedDate) {
+      const diffTime = parsedDate.getTime() - today.getTime();
+      daysUntilDue = Math.round(diffTime / (1000 * 60 * 60 * 24));
+    }
+
+    const rawInstalments = row[instalmentsColIdx] || '';
+    const parsedInstalments = parseInt(rawInstalments, 10);
+    const remainingInstalments = isNaN(parsedInstalments) ? null : parsedInstalments;
+
+    const formattedCost = new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: currencySymbol === '€' ? 'EUR' : currencySymbol === '$' ? 'USD' : 'GBP',
+      minimumFractionDigits: 2,
+    }).format(cost);
+
+    const formattedUntilSettled =
+      amountUntilSettled !== null
+        ? new Intl.NumberFormat('en-GB', {
+            style: 'currency',
+            currency: currencySymbol === '€' ? 'EUR' : currencySymbol === '$' ? 'USD' : 'GBP',
+            minimumFractionDigits: 2,
+          }).format(amountUntilSettled)
+        : null;
+
+    items.push({
+      rowIndex: r + 1, // 1-based row index for Google Sheets
+      name,
+      costPerMonth: cost,
+      formattedCost,
+      amountUntilSettled,
+      formattedUntilSettled,
+      amountUntilSettledRaw: rawUntilSettled.trim(),
+      type,
+      frequency,
+      paymentMethod,
+      nextPaymentDate,
+      parsedNextDate: parsedDate,
+      daysUntilDue,
+      remainingInstalments,
+      rawRow: row,
+    });
+  }
+
+  // Calculate totals
+  const totalMonthlyCost = items.reduce((sum, item) => {
+    // If frequency is yearly, convert to monthly equivalent or treat as monthly
+    if (item.frequency.toLowerCase().includes('year')) {
+      return sum + item.costPerMonth / 12;
+    }
+    return sum + item.costPerMonth;
+  }, 0);
+
+  const ongoingMonthlyCost = items
+    .filter((i) => i.type.toLowerCase().includes('ongoing'))
+    .reduce((sum, i) => sum + (i.frequency.toLowerCase().includes('year') ? i.costPerMonth / 12 : i.costPerMonth), 0);
+
+  const untilSettledMonthlyCost = items
+    .filter((i) => i.type.toLowerCase().includes('settled'))
+    .reduce((sum, i) => sum + i.costPerMonth, 0);
+
+  const totalUntilSettled = items.reduce((sum, item) => sum + (item.amountUntilSettled || 0), 0);
+
+  const fmt = (val: number) =>
+    new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: currencySymbol === '€' ? 'EUR' : currencySymbol === '$' ? 'USD' : 'GBP',
+      minimumFractionDigits: 2,
+    }).format(val);
+
+  return {
+    spreadsheetId,
+    sheetName,
+    headers,
+    items,
+    totalMonthlyCost,
+    formattedTotalMonthlyCost: fmt(totalMonthlyCost),
+    totalUntilSettled,
+    formattedTotalUntilSettled: fmt(totalUntilSettled),
+    ongoingMonthlyCost,
+    untilSettledMonthlyCost,
+    currencySymbol,
+    lastUpdated: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  };
+};
+
+// Fetch Outgoings data from Google Sheets
+export const fetchOutgoingsData = async (
+  token: string,
+  spreadsheetId: string,
+  preferredSheetName = 'Outgoings',
+  currencySymbol = '£',
+): Promise<OutgoingsData> => {
+  // Check if Outgoings tab exists
+  const metadata = await getSpreadsheetMetadata(token, spreadsheetId);
+  const targetSheet = metadata.sheetNames.find(
+    (name) =>
+      name.toLowerCase() === preferredSheetName.toLowerCase() ||
+      name.toLowerCase().includes('outgoing') ||
+      name.toLowerCase().includes('expense') ||
+      name.toLowerCase().includes('bill'),
+  );
+
+  if (!targetSheet) {
+    throw new Error(
+      `Tab '${preferredSheetName}' not found in spreadsheet '${metadata.title}'. Available tabs: ${metadata.sheetNames.join(', ')}`,
+    );
+  }
+
+  const rangeToFetch = `'${targetSheet}'!A1:Z100`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(rangeToFetch)}?valueRenderOption=FORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Google Sheets API error (${res.status}): ${errorText}`);
+  }
+
+  const data = await res.json();
+  const rawValues: string[][] = data.values || [];
+
+  return parseOutgoingsSheet(rawValues, spreadsheetId, targetSheet, currencySymbol);
 };

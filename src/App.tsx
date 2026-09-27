@@ -16,6 +16,7 @@ import {
   searchSavingsSpreadsheet,
   listRecentSpreadsheets,
   fetchPivotTableData,
+  fetchOutgoingsData,
   updateSpreadsheetCell,
   createDefaultSavingsSpreadsheet,
   addPivotTableTab,
@@ -25,11 +26,13 @@ import {
   PivotTableCell,
   GoogleSheetFile,
   AutoRefreshInterval,
+  OutgoingsData,
 } from './types/savings';
 import { GoogleSignInButton } from './components/GoogleSignInButton';
 import { SavingsOverview } from './components/SavingsOverview';
 import { EarningsChart } from './components/EarningsChart';
 import { PivotTableView } from './components/PivotTableView';
+import { OutgoingsView } from './components/OutgoingsView';
 import { UpdateDataModal } from './components/UpdateDataModal';
 import { SpreadsheetSelectorModal } from './components/SpreadsheetSelectorModal';
 import { PwaInstallBanner } from './components/PwaInstallBanner';
@@ -49,9 +52,12 @@ import {
   BarChart3,
   BarChart2,
   Table,
+  Receipt,
+  Calendar,
 } from 'lucide-react';
 
 const CACHE_KEY = 'savings_pwa_cached_pivot_data';
+const CACHE_OUTGOINGS_KEY = 'savings_pwa_cached_outgoings_data';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -67,6 +73,11 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [missingPivotTab, setMissingPivotTab] = useState(false);
+
+  // Outgoings Tab State
+  const [outgoingsData, setOutgoingsData] = useState<OutgoingsData | null>(null);
+  const [isLoadingOutgoings, setIsLoadingOutgoings] = useState(false);
+  const [outgoingsError, setOutgoingsError] = useState<string | null>(null);
 
   // Auto-refresh interval (in seconds: 0 = manual, 10, 30, 60)
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<AutoRefreshInterval>(30);
@@ -85,7 +96,7 @@ export default function App() {
   } | null>(null);
   const [isUpdatingCell, setIsUpdatingCell] = useState(false);
   const [isCreatingSpreadsheet, setIsCreatingSpreadsheet] = useState(false);
-  const [activeView, setActiveView] = useState<'overview' | 'chart' | 'table' | 'both'>('both');
+  const [activeView, setActiveView] = useState<'overview' | 'chart' | 'table' | 'outgoings' | 'both'>('both');
   const [customRange, setCustomRange] = useState<string>(() => {
     try {
       return localStorage.getItem('savings_custom_range') || '';
@@ -110,12 +121,15 @@ export default function App() {
     try {
       const cached = localStorage.getItem(CACHE_KEY);
       if (cached) {
-        const parsed = JSON.parse(cached) as PivotTableData;
-        setPivotData(parsed);
+        setPivotData(JSON.parse(cached));
         setIsUsingCachedData(true);
       }
-    } catch {
-      // Ignore cache parse errors
+      const cachedOutgoings = localStorage.getItem(CACHE_OUTGOINGS_KEY);
+      if (cachedOutgoings) {
+        setOutgoingsData(JSON.parse(cachedOutgoings));
+      }
+    } catch (e) {
+      console.warn('Failed to parse cached data:', e);
     }
 
     return () => {
@@ -182,6 +196,7 @@ export default function App() {
       setIsLoadingData(true);
       setError(null);
       setMissingPivotTab(false);
+      setOutgoingsError(null);
 
       const targetRange = rangeToUse !== undefined ? rangeToUse : customRange;
 
@@ -196,6 +211,21 @@ export default function App() {
         } catch {
           // Ignore storage quota
         }
+
+        // Fetch Outgoings tab data using detected currency
+        try {
+          setIsLoadingOutgoings(true);
+          const outgoings = await fetchOutgoingsData(authToken, spreadsheetId, 'Outgoings', data.currencySymbol);
+          setOutgoingsData(outgoings);
+          try {
+            localStorage.setItem(CACHE_OUTGOINGS_KEY, JSON.stringify(outgoings));
+          } catch {}
+        } catch (outgoingErr: any) {
+          console.warn('Outgoings tab notice:', outgoingErr);
+          setOutgoingsError(outgoingErr?.message || "Could not read 'Outgoings' tab.");
+        } finally {
+          setIsLoadingOutgoings(false);
+        }
       } catch (err: any) {
         console.error('Failed to load pivot table data:', err);
         const msg = err?.message || 'Error loading spreadsheet data';
@@ -204,6 +234,17 @@ export default function App() {
         // Check if missing PivotTable tab
         if (msg.includes('PivotTable') && (msg.includes('not found') || msg.includes('empty'))) {
           setMissingPivotTab(true);
+        }
+
+        // Even if pivot table failed, still attempt to load outgoings
+        try {
+          setIsLoadingOutgoings(true);
+          const outgoings = await fetchOutgoingsData(authToken, spreadsheetId, 'Outgoings', '£');
+          setOutgoingsData(outgoings);
+        } catch (outgoingErr: any) {
+          setOutgoingsError(outgoingErr?.message || "Could not read 'Outgoings' tab.");
+        } finally {
+          setIsLoadingOutgoings(false);
         }
       } finally {
         setIsLoadingData(false);
@@ -278,12 +319,26 @@ export default function App() {
       if (!isRefreshing && token && currentFile) {
         setIsRefreshing(true);
         try {
-          const updated = await fetchPivotTableData(token, currentFile.id, 'PivotTable');
-          setPivotData(updated);
-          setIsUsingCachedData(false);
-          try {
-            localStorage.setItem(CACHE_KEY, JSON.stringify(updated));
-          } catch {}
+          const [updatedPivot, updatedOutgoings] = await Promise.allSettled([
+            fetchPivotTableData(token, currentFile.id, 'PivotTable', customRange || undefined),
+            fetchOutgoingsData(token, currentFile.id, 'Outgoings', pivotData?.currencySymbol || '£'),
+          ]);
+
+          if (updatedPivot.status === 'fulfilled') {
+            setPivotData(updatedPivot.value);
+            setIsUsingCachedData(false);
+            try {
+              localStorage.setItem(CACHE_KEY, JSON.stringify(updatedPivot.value));
+            } catch {}
+          }
+
+          if (updatedOutgoings.status === 'fulfilled') {
+            setOutgoingsData(updatedOutgoings.value);
+            setOutgoingsError(null);
+            try {
+              localStorage.setItem(CACHE_OUTGOINGS_KEY, JSON.stringify(updatedOutgoings.value));
+            } catch {}
+          }
         } catch (e) {
           console.warn('Silent auto-refresh failed:', e);
         } finally {
@@ -641,6 +696,24 @@ export default function App() {
                   </span>
                 </button>
                 <button
+                  onClick={() => setActiveView('outgoings')}
+                  className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer ${
+                    activeView === 'outgoings'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Receipt className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Outgoings</span>
+                    {outgoingsData && outgoingsData.items.length > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono">
+                        {outgoingsData.items.length}
+                      </span>
+                    )}
+                  </span>
+                </button>
+                <button
                   onClick={() => setActiveView('chart')}
                   className={`px-3 py-1.5 rounded-lg font-medium transition-all whitespace-nowrap cursor-pointer ${
                     activeView === 'chart'
@@ -696,6 +769,32 @@ export default function App() {
                 }}
                 spreadsheetUrl={currentFile?.webViewLink}
               />
+            )}
+
+            {/* Outgoings / Scheduled Expenses View */}
+            {(activeView === 'both' || activeView === 'outgoings') && (
+              <div className="space-y-2">
+                {activeView === 'both' && (
+                  <div className="flex items-center justify-between pt-2 px-1">
+                    <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                      <Receipt className="w-4 h-4 text-amber-400" />
+                      <span>Scheduled Outgoings & Expenses</span>
+                    </h3>
+                    {outgoingsData && (
+                      <span className="text-xs text-slate-400 font-mono">
+                        {outgoingsData.items.length} items • {outgoingsData.formattedTotalMonthlyCost}/mo
+                      </span>
+                    )}
+                  </div>
+                )}
+                <OutgoingsView
+                  data={outgoingsData}
+                  isLoading={isLoadingOutgoings}
+                  onRefresh={handleManualRefresh}
+                  spreadsheetUrl={currentFile?.webViewLink}
+                  errorMessage={outgoingsError}
+                />
+              </div>
             )}
 
             {/* Earnings Chart View (matching user image with account type filters) */}

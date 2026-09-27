@@ -79,3 +79,36 @@ export interface SavingsMetrics {
 }
 
 export type AutoRefreshInterval = 0 | 10 | 30 | 60; // 0 = manual, in seconds
+
+export interface OutgoingItem {
+  rowIndex: number; // 1-indexed sheet row
+  name: string;
+  costPerMonth: number;
+  formattedCost: string;
+  amountUntilSettled: number | null;
+  formattedUntilSettled?: string | null;
+  amountUntilSettledRaw?: string;
+  type: 'Until settled' | 'Ongoing' | string;
+  frequency: 'Monthly' | 'Yearly' | string;
+  paymentMethod: string;
+  nextPaymentDate: string;
+  parsedNextDate: Date | null;
+  daysUntilDue: number | null;
+  remainingInstalments: number | null;
+  rawRow: string[];
+}
+
+export interface OutgoingsData {
+  spreadsheetId: string;
+  sheetName: string;
+  headers: string[];
+  items: OutgoingItem[];
+  totalMonthlyCost: number;
+  formattedTotalMonthlyCost: string;
+  totalUntilSettled: number;
+  formattedTotalUntilSettled: string;
+  ongoingMonthlyCost: number;
+  untilSettledMonthlyCost: number;
+  currencySymbol: string;
+  lastUpdated: string;
+}
