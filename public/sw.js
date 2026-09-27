@@ -1,13 +1,13 @@
 // Savings PWA Service Worker
 const CACHE_NAME = 'savings-pwa-v1';
 const STATIC_ASSETS = [
-  '/',
-  '/manifest.json',
-  '/favicon.svg',
-  '/pwa-192x192.png',
-  '/pwa-512x512.png',
-  '/pwa-maskable-512x512.png',
-  '/apple-touch-icon.png'
+  './',
+  './manifest.json',
+  './favicon.svg',
+  './pwa-192x192.png',
+  './pwa-512x512.png',
+  './pwa-maskable-512x512.png',
+  './apple-touch-icon.png'
 ];
 
 self.addEventListener('install', (event) => {
